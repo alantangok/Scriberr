@@ -228,23 +228,32 @@ func registerAdapters(cfg *config.Config) {
 	// Dedicated environment path for Voxtral (Mistral AI model)
 	voxtralEnvPath := filepath.Join(cfg.WhisperXEnv, "voxtral")
 
+	// Check if NVIDIA models should be skipped (set SKIP_NVIDIA_MODELS=true to skip)
+	skipNvidia := os.Getenv("SKIP_NVIDIA_MODELS") == "true"
+
 	// Register transcription adapters
 	registry.RegisterTranscriptionAdapter("whisperx",
 		adapters.NewWhisperXAdapter(cfg.WhisperXEnv))
-	registry.RegisterTranscriptionAdapter("parakeet",
-		adapters.NewParakeetAdapter(nvidiaEnvPath))
-	registry.RegisterTranscriptionAdapter("canary",
-		adapters.NewCanaryAdapter(nvidiaEnvPath)) // Shares with Parakeet
-	registry.RegisterTranscriptionAdapter("voxtral",
-		adapters.NewVoxtralAdapter(voxtralEnvPath))
+	if !skipNvidia {
+		registry.RegisterTranscriptionAdapter("parakeet",
+			adapters.NewParakeetAdapter(nvidiaEnvPath))
+		registry.RegisterTranscriptionAdapter("canary",
+			adapters.NewCanaryAdapter(nvidiaEnvPath)) // Shares with Parakeet
+		registry.RegisterTranscriptionAdapter("voxtral",
+			adapters.NewVoxtralAdapter(voxtralEnvPath))
+	} else {
+		logger.Info("Skipping NVIDIA models (SKIP_NVIDIA_MODELS=true)")
+	}
 	registry.RegisterTranscriptionAdapter("openai_whisper",
 		adapters.NewOpenAIAdapter(cfg.OpenAIAPIKey))
 
 	// Register diarization adapters
 	registry.RegisterDiarizationAdapter("pyannote",
 		adapters.NewPyAnnoteAdapter(pyannoteEnvPath)) // Dedicated environment
-	registry.RegisterDiarizationAdapter("sortformer",
-		adapters.NewSortformerAdapter(nvidiaEnvPath)) // Shares with Parakeet
+	if !skipNvidia {
+		registry.RegisterDiarizationAdapter("sortformer",
+			adapters.NewSortformerAdapter(nvidiaEnvPath)) // Shares with Parakeet
+	}
 
 	logger.Info("Adapter registration complete")
 }

@@ -66,7 +66,12 @@ type AudioFormatPreprocessor struct{}
 
 // AppliesTo checks if this preprocessor should be used for the given model
 func (a *AudioFormatPreprocessor) AppliesTo(capabilities interfaces.ModelCapabilities) bool {
-	// Apply to all models for consistent audio format (mono 16kHz)
+	// Skip conversion for OpenAI - it accepts MP3/M4A directly and has 25MB file limit
+	// Converting to WAV often exceeds this limit
+	if capabilities.ModelFamily == "openai" {
+		return false
+	}
+	// Apply to other models for consistent audio format (mono 16kHz)
 	return true
 }
 

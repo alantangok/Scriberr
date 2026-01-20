@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -45,6 +44,8 @@ type OpenAIModelListResponse struct {
 // @Security BearerAuth
 func (h *Handler) ValidateOpenAIKey(c *gin.Context) {
 	var req ValidateOpenAIKeyRequest
+	// Parse request body (ignore error - API key may come from config)
+	_ = c.ShouldBindJSON(&req)
 	// If API key is not provided in request, try to use the one from config
 	apiKey := req.APIKey
 	if apiKey == "" {
@@ -93,21 +94,28 @@ func (h *Handler) ValidateOpenAIKey(c *gin.Context) {
 		return
 	}
 
-	// Filter for whisper and gpt-4o transcription models
+	// Filter for whisper models from API response
 	var availableModels []string
 	for _, model := range modelList.Data {
-		isWhisper := model.ID == "whisper-1" || (len(model.ID) > 7 && model.ID[:7] == "whisper")
-		isGPT4oAudio := (len(model.ID) > 6 && model.ID[:6] == "gpt-4o") &&
-			(strings.Contains(model.ID, "transcribe") || strings.Contains(model.ID, "audio"))
-
-		if isWhisper || isGPT4oAudio {
+		if model.ID == "whisper-1" || (len(model.ID) > 7 && model.ID[:7] == "whisper") {
 			availableModels = append(availableModels, model.ID)
 		}
 	}
 
-	// If no models found (unlikely), default to whisper-1
-	if len(availableModels) == 0 {
-		availableModels = []string{"whisper-1"}
+	// Always include GPT-4o transcription models (not listed in /v1/models but available for audio)
+	gpt4oModels := []string{"gpt-4o-transcribe", "gpt-4o-mini-transcribe", "gpt-4o-transcribe-diarize"}
+	availableModels = append(availableModels, gpt4oModels...)
+
+	// Ensure whisper-1 is always available as fallback
+	hasWhisper := false
+	for _, m := range availableModels {
+		if m == "whisper-1" {
+			hasWhisper = true
+			break
+		}
+	}
+	if !hasWhisper {
+		availableModels = append([]string{"whisper-1"}, availableModels...)
 	}
 
 	c.JSON(http.StatusOK, gin.H{

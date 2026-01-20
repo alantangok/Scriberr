@@ -63,9 +63,9 @@ func NewOpenAIAdapter(apiKey string) *OpenAIAdapter {
 			Name:        "model",
 			Type:        "string",
 			Required:    false,
-			Default:     "whisper-1",
-			Options:     []string{"whisper-1"},
-			Description: "ID of the model to use",
+			Default:     "gpt-4o-transcribe",
+			Options:     []string{"whisper-1", "gpt-4o-transcribe", "gpt-4o-mini-transcribe", "gpt-4o-transcribe-diarize"},
+			Description: "ID of the model to use (gpt-4o-transcribe-diarize for speaker separation)",
 			Group:       "basic",
 		},
 		{
@@ -104,7 +104,7 @@ func NewOpenAIAdapter(apiKey string) *OpenAIAdapter {
 
 // GetSupportedModels returns the list of OpenAI models supported
 func (a *OpenAIAdapter) GetSupportedModels() []string {
-	return []string{"whisper-1"}
+	return []string{"whisper-1", "gpt-4o-transcribe", "gpt-4o-mini-transcribe", "gpt-4o-transcribe-diarize"}
 }
 
 // PrepareEnvironment is a no-op for cloud adapters
@@ -191,6 +191,8 @@ func (a *OpenAIAdapter) Transcribe(ctx context.Context, input interfaces.AudioIn
 	if strings.HasPrefix(model, "gpt-4o") {
 		if strings.Contains(model, "diarize") {
 			_ = writer.WriteField("response_format", "diarized_json")
+			// chunking_strategy is required for diarization models
+			_ = writer.WriteField("chunking_strategy", "auto")
 		} else {
 			_ = writer.WriteField("response_format", "json")
 		}
@@ -253,73 +255,125 @@ func (a *OpenAIAdapter) Transcribe(ctx context.Context, input interfaces.AudioIn
 
 	writeLog("Response received. Parsing...")
 
-	// Parse response
-	var openAIResponse struct {
-		Task     string  `json:"task"`
-		Language string  `json:"language"`
-		Duration float64 `json:"duration"`
-		Text     string  `json:"text"`
-		Segments []struct {
-			ID               int     `json:"id"`
-			Seek             int     `json:"seek"`
-			Start            float64 `json:"start"`
-			End              float64 `json:"end"`
-			Text             string  `json:"text"`
-			Tokens           []int   `json:"tokens"`
-			Temperature      float64 `json:"temperature"`
-			AvgLogprob       float64 `json:"avg_logprob"`
-			CompressionRatio float64 `json:"compression_ratio"`
-			NoSpeechProb     float64 `json:"no_speech_prob"`
-		} `json:"segments"`
-		Words []struct {
-			Word  string  `json:"word"`
-			Start float64 `json:"start"`
-			End   float64 `json:"end"`
-		} `json:"words"`
+	// Read response body for flexible parsing
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		writeLog("Error: Failed to read response body: %v", err)
+		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&openAIResponse); err != nil {
-		writeLog("Error: Failed to decode response: %v", err)
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
+	var result *interfaces.TranscriptResult
 
-	writeLog("Transcription completed successfully. Duration: %.2fs, Words: %d", openAIResponse.Duration, len(openAIResponse.Words))
+	// Handle diarized response format (gpt-4o-transcribe-diarize)
+	if strings.Contains(model, "diarize") {
+		var diarizedResponse struct {
+			Text     string `json:"text"`
+			Segments []struct {
+				ID      string  `json:"id"`
+				Type    string  `json:"type"`
+				Start   float64 `json:"start"`
+				End     float64 `json:"end"`
+				Text    string  `json:"text"`
+				Speaker string  `json:"speaker"`
+			} `json:"segments"`
+			Usage struct {
+				TotalTokens int `json:"total_tokens"`
+				InputTokens int `json:"input_tokens"`
+			} `json:"usage"`
+		}
 
-	// Convert to TranscriptResult
-	result := &interfaces.TranscriptResult{
-		Language:       openAIResponse.Language,
-		Text:           openAIResponse.Text,
-		Segments:       make([]interfaces.TranscriptSegment, len(openAIResponse.Segments)),
-		WordSegments:   make([]interfaces.TranscriptWord, len(openAIResponse.Words)),
-		ProcessingTime: time.Since(startTime),
-		ModelUsed:      model,
-		Metadata:       a.CreateDefaultMetadata(params),
-	}
+		if err := json.Unmarshal(respBody, &diarizedResponse); err != nil {
+			writeLog("Error: Failed to decode diarized response: %v", err)
+			return nil, fmt.Errorf("failed to decode diarized response: %w", err)
+		}
 
-	if len(openAIResponse.Segments) > 0 {
-		for i, seg := range openAIResponse.Segments {
+		writeLog("Diarized transcription completed. Segments: %d", len(diarizedResponse.Segments))
+
+		result = &interfaces.TranscriptResult{
+			Text:           diarizedResponse.Text,
+			Segments:       make([]interfaces.TranscriptSegment, len(diarizedResponse.Segments)),
+			ProcessingTime: time.Since(startTime),
+			ModelUsed:      model,
+			Metadata:       a.CreateDefaultMetadata(params),
+		}
+
+		for i, seg := range diarizedResponse.Segments {
+			speaker := seg.Speaker
 			result.Segments[i] = interfaces.TranscriptSegment{
-				Start: seg.Start,
-				End:   seg.End,
-				Text:  seg.Text,
+				Start:   seg.Start,
+				End:     seg.End,
+				Text:    seg.Text,
+				Speaker: &speaker,
 			}
 		}
-	} else if openAIResponse.Text != "" {
-		// If no segments returned (e.g. standard json format), create one segment with the whole text
-		result.Segments = []interfaces.TranscriptSegment{
-			{
-				Start: 0,
-				End:   openAIResponse.Duration,
-				Text:  openAIResponse.Text,
-			},
+	} else {
+		// Handle standard response format (whisper-1, gpt-4o-transcribe)
+		var openAIResponse struct {
+			Task     string  `json:"task"`
+			Language string  `json:"language"`
+			Duration float64 `json:"duration"`
+			Text     string  `json:"text"`
+			Segments []struct {
+				ID               int     `json:"id"`
+				Seek             int     `json:"seek"`
+				Start            float64 `json:"start"`
+				End              float64 `json:"end"`
+				Text             string  `json:"text"`
+				Tokens           []int   `json:"tokens"`
+				Temperature      float64 `json:"temperature"`
+				AvgLogprob       float64 `json:"avg_logprob"`
+				CompressionRatio float64 `json:"compression_ratio"`
+				NoSpeechProb     float64 `json:"no_speech_prob"`
+			} `json:"segments"`
+			Words []struct {
+				Word  string  `json:"word"`
+				Start float64 `json:"start"`
+				End   float64 `json:"end"`
+			} `json:"words"`
 		}
-	}
 
-	for i, word := range openAIResponse.Words {
-		result.WordSegments[i] = interfaces.TranscriptWord{
-			Word:  word.Word,
-			Start: word.Start,
-			End:   word.End,
+		if err := json.Unmarshal(respBody, &openAIResponse); err != nil {
+			writeLog("Error: Failed to decode response: %v", err)
+			return nil, fmt.Errorf("failed to decode response: %w", err)
+		}
+
+		writeLog("Transcription completed successfully. Duration: %.2fs, Words: %d", openAIResponse.Duration, len(openAIResponse.Words))
+
+		result = &interfaces.TranscriptResult{
+			Language:       openAIResponse.Language,
+			Text:           openAIResponse.Text,
+			Segments:       make([]interfaces.TranscriptSegment, len(openAIResponse.Segments)),
+			WordSegments:   make([]interfaces.TranscriptWord, len(openAIResponse.Words)),
+			ProcessingTime: time.Since(startTime),
+			ModelUsed:      model,
+			Metadata:       a.CreateDefaultMetadata(params),
+		}
+
+		if len(openAIResponse.Segments) > 0 {
+			for i, seg := range openAIResponse.Segments {
+				result.Segments[i] = interfaces.TranscriptSegment{
+					Start: seg.Start,
+					End:   seg.End,
+					Text:  seg.Text,
+				}
+			}
+		} else if openAIResponse.Text != "" {
+			// If no segments returned (e.g. standard json format), create one segment with the whole text
+			result.Segments = []interfaces.TranscriptSegment{
+				{
+					Start: 0,
+					End:   openAIResponse.Duration,
+					Text:  openAIResponse.Text,
+				},
+			}
+		}
+
+		for i, word := range openAIResponse.Words {
+			result.WordSegments[i] = interfaces.TranscriptWord{
+				Word:  word.Word,
+				Start: word.Start,
+				End:   word.End,
+			}
 		}
 	}
 
