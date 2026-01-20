@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect, forwardRef, useImperativeHandle, useCallback } from "react";
+import { useRef, useState, useEffect, forwardRef, useImperativeHandle, useCallback, memo } from "react";
 import { Play, Pause, AlertCircle } from "lucide-react";
 import { AudioVisualizer } from "./AudioVisualizer";
 import { cn } from "@/lib/utils";
@@ -17,7 +17,7 @@ export interface EmberPlayerProps {
     onPlayStateChange?: (isPlaying: boolean) => void;
 }
 
-export const EmberPlayer = forwardRef<EmberPlayerRef, EmberPlayerProps>(
+export const EmberPlayer = memo(forwardRef<EmberPlayerRef, EmberPlayerProps>(
     ({ src, audioId, className, onTimeUpdate, onPlayStateChange }, ref) => {
         const audioRef = useRef<HTMLAudioElement>(null);
         const progressRef = useRef<HTMLDivElement>(null);
@@ -268,6 +268,6 @@ export const EmberPlayer = forwardRef<EmberPlayerRef, EmberPlayerProps>(
             </div>
         );
     }
-);
+));
 
 EmberPlayer.displayName = "EmberPlayer";
