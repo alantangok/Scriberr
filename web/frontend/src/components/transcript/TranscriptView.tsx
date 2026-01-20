@@ -124,21 +124,30 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
 
     // 1. Precompute per-segment text and offsets
     const expandedData = useMemo(() => {
-        if (!transcript?.segments || !transcript.word_segments) return [];
+        if (!transcript?.segments) return [];
 
         return transcript.segments.map((segment) => {
-            // Filter words belonging to this segment
-            const segmentWords = transcript.word_segments!.filter(
-                word => word.start >= segment.start - 0.1 && word.end <= segment.end + 0.1
-            );
+            // If word_segments exist, filter words belonging to this segment
+            if (transcript.word_segments && transcript.word_segments.length > 0) {
+                const segmentWords = transcript.word_segments.filter(
+                    word => word.start >= segment.start - 0.1 && word.end <= segment.end + 0.1
+                );
 
-            // Compute local offsets for this segment's text
-            const { fullText, offsets } = computeWordOffsets(segmentWords);
+                // Compute local offsets for this segment's text
+                const { fullText, offsets } = computeWordOffsets(segmentWords);
 
+                return {
+                    ...segment,
+                    fullText, // The text to render
+                    offsets   // Offsets relative to this segment's text node
+                };
+            }
+
+            // No word_segments - use segment text directly (e.g., OpenAI diarize)
             return {
                 ...segment,
-                fullText, // The text to render
-                offsets   // Offsets relative to this segment's text node
+                fullText: segment.text,
+                offsets: [] // No word-level offsets available
             };
         });
     }, [transcript]);
