@@ -17,6 +17,7 @@ import (
 	"scriberr/internal/transcription/interfaces"
 	"scriberr/internal/transcription/pipeline"
 	"scriberr/internal/transcription/registry"
+	"scriberr/internal/transcription/splitter"
 	"scriberr/internal/webhook"
 	"scriberr/pkg/logger"
 )
@@ -52,6 +53,7 @@ type UnifiedTranscriptionService struct {
 	jobRepo               repository.JobRepository
 	webhookService        *webhook.Service
 	broadcaster           *sse.Broadcaster
+	audioSplitter         *splitter.AudioSplitter // For splitting large audio files
 }
 
 // NewUnifiedTranscriptionService creates a new unified transcription service
@@ -69,6 +71,7 @@ func NewUnifiedTranscriptionService(jobRepo repository.JobRepository, tempDir, o
 		},
 		jobRepo:        jobRepo,
 		webhookService: webhook.NewService(),
+		audioSplitter:  splitter.NewAudioSplitter(tempDir),
 	}
 }
 
@@ -298,7 +301,8 @@ func (u *UnifiedTranscriptionService) processSingleTrackJob(ctx context.Context,
 		// Convert parameters for this specific model
 		params := u.convertParametersForModel(job.Parameters, transcriptionModelID)
 
-		transcriptResult, err = transcriptionAdapter.Transcribe(ctx, preprocessedInput, params, procCtx)
+		// Check if audio needs splitting (>25MB or >25min)
+		transcriptResult, err = u.transcribeWithSplitting(ctx, transcriptionAdapter, preprocessedInput, params, procCtx)
 		if err != nil {
 			return fmt.Errorf("transcription failed: %w", err)
 		}
@@ -427,6 +431,77 @@ func (u *UnifiedTranscriptionService) transcriptionIncludesDiarization(modelID s
 	}
 
 	return false
+}
+
+// transcribeWithSplitting handles transcription with automatic audio splitting for large files
+func (u *UnifiedTranscriptionService) transcribeWithSplitting(
+	ctx context.Context,
+	adapter interfaces.TranscriptionAdapter,
+	input interfaces.AudioInput,
+	params map[string]interface{},
+	procCtx interfaces.ProcessingContext,
+) (*interfaces.TranscriptResult, error) {
+	// Check if splitting is needed
+	splitResult, err := u.audioSplitter.Split(ctx, input, procCtx.JobID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to split audio: %w", err)
+	}
+
+	// Ensure cleanup of chunks
+	defer u.audioSplitter.CleanupChunks(splitResult)
+
+	// If no splitting needed, transcribe directly
+	if !splitResult.NeedsSplit {
+		return adapter.Transcribe(ctx, input, params, procCtx)
+	}
+
+	logger.Info("Processing audio in chunks",
+		"job_id", procCtx.JobID,
+		"chunk_count", len(splitResult.Chunks))
+
+	// Process each chunk
+	results := make([]*interfaces.TranscriptResult, 0, len(splitResult.Chunks))
+
+	for i, chunk := range splitResult.Chunks {
+		logger.Info("Processing chunk",
+			"job_id", procCtx.JobID,
+			"chunk", i+1,
+			"total", len(splitResult.Chunks),
+			"start_time", chunk.StartTime,
+			"duration", chunk.Duration)
+
+		// Create input for this chunk
+		chunkInput := interfaces.AudioInput{
+			FilePath:   chunk.FilePath,
+			Format:     input.Format,
+			SampleRate: input.SampleRate,
+			Channels:   input.Channels,
+			Duration:   time.Duration(chunk.Duration * float64(time.Second)),
+			Metadata:   input.Metadata,
+		}
+
+		// Get chunk file size
+		if fi, err := os.Stat(chunk.FilePath); err == nil {
+			chunkInput.Size = fi.Size()
+		}
+
+		// Transcribe this chunk
+		result, err := adapter.Transcribe(ctx, chunkInput, params, procCtx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to transcribe chunk %d: %w", i+1, err)
+		}
+
+		results = append(results, result)
+	}
+
+	// Merge all results
+	merged := splitter.MergeResults(results, splitResult.Chunks)
+
+	logger.Info("Audio chunks merged successfully",
+		"job_id", procCtx.JobID,
+		"total_segments", len(merged.Segments))
+
+	return merged, nil
 }
 
 // ffprobeOutput represents the JSON output from ffprobe
