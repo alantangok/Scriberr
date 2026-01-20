@@ -78,3 +78,5 @@ transcriber
 .venv/
 venv/
 scripts/.venv/
+main
+server
