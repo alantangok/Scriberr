@@ -19,10 +19,10 @@ import (
 const (
 	// MaxFileSizeBytes is the maximum file size before splitting (25MB)
 	MaxFileSizeBytes = 25 * 1024 * 1024
-	// MaxDurationMinutes is the maximum duration before splitting (25 minutes)
-	MaxDurationMinutes = 25
-	// ChunkDurationMinutes is the target chunk duration (10 minutes for safety margin)
-	ChunkDurationMinutes = 10
+	// MaxDurationMinutes is the maximum duration before splitting (5 minutes)
+	MaxDurationMinutes = 5
+	// ChunkDurationMinutes is the target chunk duration (5 minutes)
+	ChunkDurationMinutes = 5
 )
 
 // AudioSplitter handles splitting large audio files into chunks
@@ -103,20 +103,22 @@ func (s *AudioSplitter) Split(ctx context.Context, input interfaces.AudioInput, 
 	// Calculate chunk duration based on file characteristics
 	chunkDurationSec := s.calculateChunkDuration(input)
 
-	// Get file extension for output
-	ext := filepath.Ext(input.FilePath)
-	if ext == "" {
-		ext = ".mp3" // Default to mp3
-	}
+	// Always output as MP3 since we re-encode for clean frame boundaries
+	ext := ".mp3"
 
 	// Build ffmpeg command for segmentation
 	outputPattern := filepath.Join(chunkDir, fmt.Sprintf("chunk_%%03d%s", ext))
 
+	// Re-encode to ensure clean MP3 frames at segment boundaries
+	// -c copy causes corrupted frames that slow down OpenAI processing
 	args := []string{
 		"-i", input.FilePath,
 		"-f", "segment",
 		"-segment_time", fmt.Sprintf("%.0f", chunkDurationSec),
-		"-c", "copy", // Copy without re-encoding for speed
+		"-ar", "16000",        // 16kHz - OpenAI's internal sample rate
+		"-ac", "1",            // Mono - single channel
+		"-c:a", "libmp3lame",  // Re-encode to MP3
+		"-b:a", "64k",         // 64kbps - sufficient for speech
 		"-reset_timestamps", "1",
 		"-map", "0:a", // Only audio stream
 		outputPattern,
@@ -176,12 +178,12 @@ func (s *AudioSplitter) calculateChunkDuration(input interfaces.AudioInput) floa
 		}
 	}
 
-	// Minimum 5 minutes, maximum 15 minutes
-	if chunkDuration < 300 {
-		chunkDuration = 300
+	// Chunk duration limits
+	if chunkDuration < 60 {
+		chunkDuration = 60 // Minimum 1 minute
 	}
-	if chunkDuration > 900 {
-		chunkDuration = 900
+	if chunkDuration > 300 {
+		chunkDuration = 300 // Maximum 5 minutes
 	}
 
 	return chunkDuration

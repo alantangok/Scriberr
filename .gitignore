@@ -71,3 +71,10 @@ tmp/
 # *.png
 dhl.txt
 __pycache__/
+scriberr-linux
+transcriber
+
+# Python virtual environments
+.venv/
+venv/
+scripts/.venv/

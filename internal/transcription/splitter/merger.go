@@ -45,12 +45,22 @@ func MergeResults(results []*interfaces.TranscriptResult, chunks []ChunkInfo) *i
 		}
 
 		// Adjust and append segments
+		// Prefix speaker with chunk index to distinguish cross-chunk speakers
+		// e.g., "Speaker A" in chunk 2 becomes "2-A"
 		for _, seg := range result.Segments {
+			var speaker *string
+			if seg.Speaker != nil && *seg.Speaker != "" && len(results) > 1 {
+				// Extract letter from "Speaker A" -> "A", then prefix with chunk
+				s := fmt.Sprintf("%d-%s", i, strings.TrimPrefix(*seg.Speaker, "Speaker "))
+				speaker = &s
+			} else {
+				speaker = seg.Speaker
+			}
 			adjustedSeg := interfaces.TranscriptSegment{
 				Start:    seg.Start + timeOffset,
 				End:      seg.End + timeOffset,
 				Text:     seg.Text,
-				Speaker:  seg.Speaker,
+				Speaker:  speaker,
 				Language: seg.Language,
 			}
 			merged.Segments = append(merged.Segments, adjustedSeg)
@@ -58,12 +68,19 @@ func MergeResults(results []*interfaces.TranscriptResult, chunks []ChunkInfo) *i
 
 		// Adjust and append word segments
 		for _, word := range result.WordSegments {
+			var speaker *string
+			if word.Speaker != nil && *word.Speaker != "" && len(results) > 1 {
+				s := fmt.Sprintf("%d-%s", i, strings.TrimPrefix(*word.Speaker, "Speaker "))
+				speaker = &s
+			} else {
+				speaker = word.Speaker
+			}
 			adjustedWord := interfaces.TranscriptWord{
 				Start:   word.Start + timeOffset,
 				End:     word.End + timeOffset,
 				Word:    word.Word,
 				Score:   word.Score,
-				Speaker: word.Speaker,
+				Speaker: speaker,
 			}
 			merged.WordSegments = append(merged.WordSegments, adjustedWord)
 		}

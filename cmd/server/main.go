@@ -228,12 +228,18 @@ func registerAdapters(cfg *config.Config) {
 	// Dedicated environment path for Voxtral (Mistral AI model)
 	voxtralEnvPath := filepath.Join(cfg.WhisperXEnv, "voxtral")
 
+	// Check if only OpenAI should be used (no local models)
+	// Set OPENAI_ONLY=true to skip all local Python models (whisperx, pyannote, nvidia)
+	openaiOnly := os.Getenv("OPENAI_ONLY") == "true"
+
 	// Check if NVIDIA models should be skipped (set SKIP_NVIDIA_MODELS=true to skip)
-	skipNvidia := os.Getenv("SKIP_NVIDIA_MODELS") == "true"
+	skipNvidia := os.Getenv("SKIP_NVIDIA_MODELS") == "true" || openaiOnly
 
 	// Register transcription adapters
-	registry.RegisterTranscriptionAdapter("whisperx",
-		adapters.NewWhisperXAdapter(cfg.WhisperXEnv))
+	if !openaiOnly {
+		registry.RegisterTranscriptionAdapter("whisperx",
+			adapters.NewWhisperXAdapter(cfg.WhisperXEnv))
+	}
 	if !skipNvidia {
 		registry.RegisterTranscriptionAdapter("parakeet",
 			adapters.NewParakeetAdapter(nvidiaEnvPath))
@@ -241,15 +247,20 @@ func registerAdapters(cfg *config.Config) {
 			adapters.NewCanaryAdapter(nvidiaEnvPath)) // Shares with Parakeet
 		registry.RegisterTranscriptionAdapter("voxtral",
 			adapters.NewVoxtralAdapter(voxtralEnvPath))
-	} else {
+	}
+	if openaiOnly {
+		logger.Info("OpenAI-only mode: skipping all local models (OPENAI_ONLY=true)")
+	} else if skipNvidia {
 		logger.Info("Skipping NVIDIA models (SKIP_NVIDIA_MODELS=true)")
 	}
 	registry.RegisterTranscriptionAdapter("openai_whisper",
 		adapters.NewOpenAIAdapter(cfg.OpenAIAPIKey))
 
 	// Register diarization adapters
-	registry.RegisterDiarizationAdapter("pyannote",
-		adapters.NewPyAnnoteAdapter(pyannoteEnvPath)) // Dedicated environment
+	if !openaiOnly {
+		registry.RegisterDiarizationAdapter("pyannote",
+			adapters.NewPyAnnoteAdapter(pyannoteEnvPath)) // Dedicated environment
+	}
 	if !skipNvidia {
 		registry.RegisterDiarizationAdapter("sortformer",
 			adapters.NewSortformerAdapter(nvidiaEnvPath)) // Shares with Parakeet

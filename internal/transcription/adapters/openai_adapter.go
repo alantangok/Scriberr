@@ -3,6 +3,7 @@ package adapters
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -236,14 +237,101 @@ func (a *OpenAIAdapter) Transcribe(ctx context.Context, input interfaces.AudioIn
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 
-	// Execute request
+	// Execute request with retry logic for transient network errors
+	// Force HTTP/1.1 to avoid HTTP/2 framing layer issues with OpenAI's API
+	// during long-running transcription requests
 	client := &http.Client{
 		Timeout: 10 * time.Minute, // Generous timeout for large files
+		Transport: &http.Transport{
+			ForceAttemptHTTP2: false,
+			TLSNextProto:      make(map[string]func(authority string, c *tls.Conn) http.RoundTripper),
+		},
 	}
-	resp, err := client.Do(req)
-	if err != nil {
-		writeLog("Error: Request failed: %v", err)
-		return nil, fmt.Errorf("request failed: %w", err)
+
+	var resp *http.Response
+	maxRetries := 3
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		writeLog("Attempt %d/%d: Sending request (file size: %d bytes)...", attempt, maxRetries, body.Len())
+		resp, err = client.Do(req)
+		if err == nil {
+			writeLog("Attempt %d/%d: Response received (status: %d)", attempt, maxRetries, resp.StatusCode)
+			break // Success
+		}
+
+		// Log detailed error information
+		writeLog("Attempt %d/%d: Request error: %v (type: %T)", attempt, maxRetries, err, err)
+
+		// Check if error is retryable (network errors, EOF, timeouts)
+		errStr := err.Error()
+		isRetryable := strings.Contains(errStr, "EOF") ||
+			strings.Contains(errStr, "connection reset") ||
+			strings.Contains(errStr, "timeout") ||
+			strings.Contains(errStr, "connection refused") ||
+			strings.Contains(errStr, "network is unreachable") ||
+			strings.Contains(errStr, "broken pipe") ||
+			strings.Contains(errStr, "connection closed")
+
+		if !isRetryable || attempt == maxRetries {
+			writeLog("Error: Request failed after %d attempts: %v", attempt, err)
+			writeLog("Error details - Retryable: %v, Attempt: %d, MaxRetries: %d", isRetryable, attempt, maxRetries)
+			return nil, fmt.Errorf("request failed: %w", err)
+		}
+
+		// Wait before retry with exponential backoff
+		backoff := time.Duration(attempt*attempt) * 5 * time.Second
+		writeLog("Request failed (attempt %d/%d): %v. Retrying in %v...", attempt, maxRetries, err, backoff)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(backoff):
+		}
+
+		// Re-read file and recreate request for retry
+		file.Seek(0, 0)
+		body.Reset()
+		writer = multipart.NewWriter(body)
+
+		part, err = writer.CreateFormFile("file", filepath.Base(input.FilePath))
+		if err != nil {
+			writeLog("Error: Failed to create form file on retry: %v", err)
+			return nil, fmt.Errorf("failed to create form file on retry: %w", err)
+		}
+		if _, err = io.Copy(part, file); err != nil {
+			writeLog("Error: Failed to copy file content on retry: %v", err)
+			return nil, fmt.Errorf("failed to copy file content on retry: %w", err)
+		}
+
+		_ = writer.WriteField("model", model)
+		if strings.HasPrefix(model, "gpt-4o") {
+			if strings.Contains(model, "diarize") {
+				_ = writer.WriteField("response_format", "diarized_json")
+				_ = writer.WriteField("chunking_strategy", "auto")
+			} else {
+				_ = writer.WriteField("response_format", "json")
+			}
+		} else {
+			_ = writer.WriteField("response_format", "verbose_json")
+			if model == "whisper-1" {
+				_ = writer.WriteField("timestamp_granularities[]", "word")
+				_ = writer.WriteField("timestamp_granularities[]", "segment")
+			}
+		}
+		if lang := a.GetStringParameter(params, "language"); lang != "" {
+			_ = writer.WriteField("language", lang)
+		}
+		if prompt := a.GetStringParameter(params, "prompt"); prompt != "" {
+			_ = writer.WriteField("prompt", prompt)
+		}
+		_ = writer.WriteField("temperature", fmt.Sprintf("%.2f", temp))
+		writer.Close()
+
+		req, err = http.NewRequestWithContext(ctx, "POST", "https://api.openai.com/v1/audio/transcriptions", body)
+		if err != nil {
+			writeLog("Error: Failed to create request on retry: %v", err)
+			return nil, fmt.Errorf("failed to create request on retry: %w", err)
+		}
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 	defer resp.Body.Close()
 
