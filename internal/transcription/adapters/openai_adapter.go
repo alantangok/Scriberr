@@ -18,6 +18,12 @@ import (
 	"scriberr/pkg/logger"
 )
 
+// SpeakerReference represents a known speaker audio reference for cross-chunk diarization
+type SpeakerReference struct {
+	Speaker        string `json:"speaker"`
+	ReferenceAudio string `json:"reference_audio"`
+}
+
 // OpenAIAdapter implements the TranscriptionAdapter interface for OpenAI API
 type OpenAIAdapter struct {
 	*BaseAdapter
@@ -221,6 +227,17 @@ func (a *OpenAIAdapter) Transcribe(ctx context.Context, input interfaces.AudioIn
 	writeLog("Temperature: %.2f", temp)
 	_ = writer.WriteField("temperature", fmt.Sprintf("%.2f", temp))
 
+	// Add known_speaker_references for cross-chunk speaker consistency
+	if refs, ok := params["known_speaker_references"]; ok {
+		if speakerRefs, ok := refs.([]SpeakerReference); ok && len(speakerRefs) > 0 {
+			writeLog("Adding %d speaker references for cross-chunk consistency", len(speakerRefs))
+			for i, ref := range speakerRefs {
+				_ = writer.WriteField(fmt.Sprintf("known_speaker_references[%d][speaker]", i), ref.Speaker)
+				_ = writer.WriteField(fmt.Sprintf("known_speaker_references[%d][reference_audio]", i), ref.ReferenceAudio)
+			}
+		}
+	}
+
 	if err := writer.Close(); err != nil {
 		writeLog("Error: Failed to close multipart writer: %v", err)
 		return nil, fmt.Errorf("failed to close multipart writer: %w", err)
@@ -323,6 +340,15 @@ func (a *OpenAIAdapter) Transcribe(ctx context.Context, input interfaces.AudioIn
 			_ = writer.WriteField("prompt", prompt)
 		}
 		_ = writer.WriteField("temperature", fmt.Sprintf("%.2f", temp))
+		// Re-add speaker references on retry
+		if refs, ok := params["known_speaker_references"]; ok {
+			if speakerRefs, ok := refs.([]SpeakerReference); ok {
+				for i, ref := range speakerRefs {
+					_ = writer.WriteField(fmt.Sprintf("known_speaker_references[%d][speaker]", i), ref.Speaker)
+					_ = writer.WriteField(fmt.Sprintf("known_speaker_references[%d][reference_audio]", i), ref.ReferenceAudio)
+				}
+			}
+		}
 		writer.Close()
 
 		req, err = http.NewRequestWithContext(ctx, "POST", "https://api.openai.com/v1/audio/transcriptions", body)
