@@ -80,3 +80,4 @@ venv/
 scripts/.venv/
 main
 server
+deploy.sh
