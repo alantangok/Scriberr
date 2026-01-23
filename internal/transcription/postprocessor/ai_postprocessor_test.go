@@ -75,7 +75,12 @@ func TestParseCleanupResponse_Valid(t *testing.T) {
 		{"text": "How are you?", "speaker": "A", "start": 1.0, "end": 2.0, "merge_with_next": false}
 	]`
 
-	segments, err := parseCleanupResponse(response, 2)
+	original := []CleanedSegment{
+		{Text: "Hello", Speaker: "A", Start: 0.0, End: 1.0},
+		{Text: "How are you", Speaker: "A", Start: 1.0, End: 2.0},
+	}
+
+	segments, err := parseCleanupResponse(response, original)
 	assert.NoError(t, err)
 	assert.Len(t, segments, 2)
 	assert.Equal(t, "Hello, world.", segments[0].Text)
@@ -87,26 +92,61 @@ func TestParseCleanupResponse_WithMarkdown(t *testing.T) {
 		{"text": "Hello.", "speaker": "A", "start": 0.0, "end": 1.0}
 	]` + "\n```"
 
-	segments, err := parseCleanupResponse(response, 1)
+	original := []CleanedSegment{
+		{Text: "Hello", Speaker: "A", Start: 0.0, End: 1.0},
+	}
+
+	segments, err := parseCleanupResponse(response, original)
 	assert.NoError(t, err)
 	assert.Len(t, segments, 1)
 	assert.Equal(t, "Hello.", segments[0].Text)
 }
 
-func TestParseCleanupResponse_CountMismatch(t *testing.T) {
+func TestParseCleanupResponse_PremergedSegments(t *testing.T) {
+	// LLM merged 3 segments into 1
 	response := `[
-		{"text": "Hello.", "speaker": "A", "start": 0.0, "end": 1.0}
+		{"text": "你好，我今日去咗買股票。", "speaker": "A", "start": 0.0, "end": 3.0}
 	]`
 
-	_, err := parseCleanupResponse(response, 3)
+	original := []CleanedSegment{
+		{Text: "你好", Speaker: "A", Start: 0.0, End: 1.0},
+		{Text: "我今日", Speaker: "A", Start: 1.0, End: 2.0},
+		{Text: "去咗買股票", Speaker: "A", Start: 2.0, End: 3.0},
+	}
+
+	segments, err := parseCleanupResponse(response, original)
+	assert.NoError(t, err)
+	// Should return the pre-merged segment
+	assert.Len(t, segments, 1)
+	assert.Equal(t, "你好，我今日去咗買股票。", segments[0].Text)
+	assert.Equal(t, 0.0, segments[0].Start)
+	assert.Equal(t, 3.0, segments[0].End)
+}
+
+func TestParseCleanupResponse_MoreThanOriginal(t *testing.T) {
+	// LLM returned more segments than input - should error
+	response := `[
+		{"text": "Hello.", "speaker": "A", "start": 0.0, "end": 0.5},
+		{"text": "World.", "speaker": "A", "start": 0.5, "end": 1.0}
+	]`
+
+	original := []CleanedSegment{
+		{Text: "Hello world", Speaker: "A", Start: 0.0, End: 1.0},
+	}
+
+	_, err := parseCleanupResponse(response, original)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "segment count mismatch")
+	assert.Contains(t, err.Error(), "segment count increased")
 }
 
 func TestParseCleanupResponse_InvalidJSON(t *testing.T) {
 	response := `not valid json`
 
-	_, err := parseCleanupResponse(response, 1)
+	original := []CleanedSegment{
+		{Text: "Hello", Speaker: "A", Start: 0.0, End: 1.0},
+	}
+
+	_, err := parseCleanupResponse(response, original)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid JSON")
 }

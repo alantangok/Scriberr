@@ -143,3 +143,8 @@ func (u *UnifiedJobProcessor) TerminateMultiTrackJob(jobID string) error {
 func (u *UnifiedJobProcessor) IsMultiTrackJob(jobID string) bool {
 	return u.unifiedService.IsMultiTrackJob(jobID)
 }
+
+// ReprocessTranscript runs AI post-processing on an existing transcript
+func (u *UnifiedJobProcessor) ReprocessTranscript(ctx context.Context, jobID string) error {
+	return u.unifiedService.ReprocessTranscript(ctx, jobID)
+}

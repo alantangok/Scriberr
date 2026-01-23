@@ -198,7 +198,7 @@ func (p *AITextPostprocessor) processBatch(
 
 	// Parse response
 	content := strings.TrimSpace(resp.Choices[0].Message.Content)
-	cleaned, err := parseCleanupResponse(content, len(inputSegments))
+	cleaned, err := parseCleanupResponse(content, inputSegments)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse LLM response: %w", err)
 	}
@@ -207,7 +207,8 @@ func (p *AITextPostprocessor) processBatch(
 }
 
 // parseCleanupResponse parses the LLM response JSON
-func parseCleanupResponse(content string, expectedCount int) ([]CleanedSegment, error) {
+// Accepts pre-merged segments from LLM (fewer segments than input is OK)
+func parseCleanupResponse(content string, originalSegments []CleanedSegment) ([]CleanedSegment, error) {
 	// Strip markdown code blocks if present
 	content = strings.TrimPrefix(content, "```json")
 	content = strings.TrimPrefix(content, "```")
@@ -219,12 +220,86 @@ func parseCleanupResponse(content string, expectedCount int) ([]CleanedSegment, 
 		return nil, fmt.Errorf("invalid JSON: %w", err)
 	}
 
-	// Validate segment count matches (LLM shouldn't add/remove segments)
-	if len(segments) != expectedCount {
-		return nil, fmt.Errorf("segment count mismatch: expected %d, got %d", expectedCount, len(segments))
+	// LLM returned more segments than input - that's an error
+	if len(segments) > len(originalSegments) {
+		return nil, fmt.Errorf("segment count increased: expected <= %d, got %d", len(originalSegments), len(segments))
 	}
 
-	return segments, nil
+	// If counts match exactly, use as-is (ideal case with merge_with_next flags)
+	if len(segments) == len(originalSegments) {
+		return segments, nil
+	}
+
+	// LLM pre-merged segments - map them back using timestamps
+	logger.Debug("LLM pre-merged segments, mapping back",
+		"original", len(originalSegments), "received", len(segments))
+
+	return mapPremergedSegments(segments, originalSegments), nil
+}
+
+// mapPremergedSegments maps LLM pre-merged segments back to original segment boundaries
+// The LLM may have combined multiple segments into one, so we distribute the cleaned text
+// while preserving original timestamp structure
+func mapPremergedSegments(llmSegments, originalSegments []CleanedSegment) []CleanedSegment {
+	result := make([]CleanedSegment, 0, len(originalSegments))
+
+	llmIdx := 0
+	for i := 0; i < len(originalSegments); i++ {
+		orig := originalSegments[i]
+
+		// Find the LLM segment that covers this original segment's time range
+		var matchedLLM *CleanedSegment
+		for j := llmIdx; j < len(llmSegments); j++ {
+			llm := &llmSegments[j]
+			// Check if original segment falls within or near the LLM segment's time range
+			// Use a small tolerance for floating point comparison
+			if orig.Start >= llm.Start-0.1 && orig.End <= llm.End+0.1 {
+				matchedLLM = llm
+				break
+			}
+			// If LLM segment ends before original starts, move to next LLM segment
+			if llm.End < orig.Start-0.1 {
+				llmIdx = j + 1
+			}
+		}
+
+		if matchedLLM == nil {
+			// No match found - keep original segment
+			result = append(result, orig)
+			continue
+		}
+
+		// Check if this is the first original segment in a merged group
+		isFirstInGroup := i == 0 || originalSegments[i-1].End < matchedLLM.Start-0.1
+
+		if isFirstInGroup {
+			// First segment in merged group gets the cleaned text
+			result = append(result, CleanedSegment{
+				Text:          matchedLLM.Text,
+				Speaker:       matchedLLM.Speaker,
+				Start:         matchedLLM.Start,
+				End:           matchedLLM.End,
+				MergeWithNext: false,
+			})
+
+			// Skip remaining original segments that fall within this LLM segment
+			for i+1 < len(originalSegments) {
+				next := originalSegments[i+1]
+				if next.Start >= matchedLLM.Start-0.1 && next.End <= matchedLLM.End+0.1 {
+					i++
+				} else {
+					break
+				}
+			}
+		}
+	}
+
+	// If no segments matched, return original
+	if len(result) == 0 {
+		return originalSegments
+	}
+
+	return result
 }
 
 // rebuildFullText reconstructs the full text from segments

@@ -1323,6 +1323,45 @@ func (h *Handler) DeleteTranscriptionJob(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Job deleted successfully"})
 }
 
+// @Summary Reprocess transcript with AI post-processor
+// @Description Run AI post-processing on an existing transcript to add punctuation and clean up text
+// @Tags transcription
+// @Produce json
+// @Param id path string true "Job ID"
+// @Success 200 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /api/v1/transcription/{id}/reprocess [post]
+// @Security ApiKeyAuth
+// @Security BearerAuth
+func (h *Handler) ReprocessTranscript(c *gin.Context) {
+	jobID := c.Param("id")
+
+	// Check if job exists
+	job, err := h.jobRepo.FindByID(c.Request.Context(), jobID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
+		return
+	}
+
+	// Check if job has a transcript
+	if job.Transcript == nil || *job.Transcript == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No transcript available to reprocess"})
+		return
+	}
+
+	// Run AI post-processing
+	if err := h.unifiedProcessor.ReprocessTranscript(c.Request.Context(), jobID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Reprocessing failed: %v", err)})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Transcript reprocessed successfully",
+		"job_id":  jobID,
+	})
+}
+
 // @Summary Get transcription job execution data
 // @Description Get execution parameters and timing for a transcription job
 // @Tags transcription

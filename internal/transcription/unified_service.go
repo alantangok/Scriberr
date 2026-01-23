@@ -1067,3 +1067,47 @@ func min(a, b float64) float64 {
 	}
 	return b
 }
+
+// ReprocessTranscript runs AI post-processing on an existing transcript
+func (u *UnifiedTranscriptionService) ReprocessTranscript(ctx context.Context, jobID string) error {
+	if u.aiPostprocessor == nil {
+		return fmt.Errorf("AI post-processor not configured")
+	}
+
+	// Get the job from database
+	job, err := u.jobRepo.FindByID(ctx, jobID)
+	if err != nil {
+		return fmt.Errorf("failed to get job: %w", err)
+	}
+
+	if job.Transcript == nil || *job.Transcript == "" {
+		return fmt.Errorf("no transcript found for job %s", jobID)
+	}
+
+	// Parse existing transcript
+	var result interfaces.TranscriptResult
+	if err := json.Unmarshal([]byte(*job.Transcript), &result); err != nil {
+		return fmt.Errorf("failed to parse existing transcript: %w", err)
+	}
+
+	logger.Info("Reprocessing transcript with AI post-processor",
+		"job_id", jobID, "segments", len(result.Segments))
+
+	// Run AI post-processing
+	processedResult, err := u.aiPostprocessor.ProcessTranscript(ctx, &result, nil)
+	if err != nil {
+		return fmt.Errorf("AI post-processing failed: %w", err)
+	}
+
+	// Save the updated result
+	if err := u.saveTranscriptionResults(jobID, processedResult); err != nil {
+		return fmt.Errorf("failed to save reprocessed transcript: %w", err)
+	}
+
+	logger.Info("Reprocessing complete",
+		"job_id", jobID,
+		"original_segments", len(result.Segments),
+		"processed_segments", len(processedResult.Segments))
+
+	return nil
+}
