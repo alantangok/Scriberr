@@ -1,7 +1,7 @@
 # PL001: GPT-4o-Transcribe-Diarize Speaker Reference Implementation
 
 **Date**: 2026-01-23
-**Status**: Planning
+**Status**: Implemented
 **Priority**: High
 
 ## Problem Statement
@@ -202,3 +202,52 @@ For each unique speaker:
     Extract audio using ffmpeg
     Encode as base64 data URL
 ```
+
+## ✅ Implementation Complete
+
+**Date**: 2026-01-23
+**Commits**: bd9fe40, d950c02, 9a72d14, bf891cd
+
+### Files Modified/Created
+
+- `internal/transcription/splitter/speaker_samples.go` (NEW - 256 lines)
+  - SpeakerSample and SpeakerReference structs
+  - ExtractSpeakerSamples, ToSpeakerReferences functions
+  - Segment selection algorithm with concatenation fallback
+  - FFmpeg extraction and base64 encoding
+
+- `internal/transcription/adapters/openai_adapter.go` (+25 lines)
+  - Added known_speaker_references multipart form fields
+  - Included in retry logic for robustness
+
+- `internal/transcription/unified_service.go` (+30 lines)
+  - Two-pass transcription in transcribeWithSplitting
+  - Speaker sample extraction after first chunk
+  - Reference passing to subsequent chunks
+
+- `internal/transcription/splitter/merger.go` (+25 lines)
+  - Conditional speaker prefixing via speakerRefsUsed flag
+  - adjustSpeakerLabel helper function
+  - Metadata flag for speaker_references_used
+
+### Test Coverage
+
+- `internal/transcription/splitter/speaker_samples_test.go` (NEW - 240 lines)
+- `internal/transcription/splitter/merger_test.go` (NEW - 210 lines)
+- **22 tests, all passing**
+
+### Clean Code Compliance
+
+- ✅ All new files < 300 lines
+- ✅ All functions < 30 lines
+- ✅ Max 3 indentation levels
+- ✅ Single responsibility per function
+- ✅ No hardcoded values (constants used)
+- ✅ DRY - No duplication
+- ✅ Clear naming conventions
+
+### Notes
+
+- Feature is automatically enabled when using gpt-4o-transcribe-diarize with chunked audio
+- Falls back to chunk prefix (0-A, 1-B) if sample extraction fails
+- No new dependencies required (ffmpeg already in use)
