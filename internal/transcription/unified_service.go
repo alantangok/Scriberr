@@ -459,8 +459,14 @@ func (u *UnifiedTranscriptionService) transcribeWithSplitting(
 		"job_id", procCtx.JobID,
 		"chunk_count", len(splitResult.Chunks))
 
+	// Check if this is a diarize model that supports speaker references
+	modelName, _ := params["model"].(string)
+	useSpeakerRefs := strings.Contains(modelName, "diarize") && len(splitResult.Chunks) > 1
+
 	// Process each chunk
 	results := make([]*interfaces.TranscriptResult, 0, len(splitResult.Chunks))
+	var speakerSamples []splitter.SpeakerSample
+	speakerRefsUsed := false
 
 	for i, chunk := range splitResult.Chunks {
 		logger.Info("Processing chunk",
@@ -485,21 +491,51 @@ func (u *UnifiedTranscriptionService) transcribeWithSplitting(
 			chunkInput.Size = fi.Size()
 		}
 
+		// For chunks after the first, add speaker references if available
+		chunkParams := params
+		if i > 0 && len(speakerSamples) > 0 {
+			// Create copy of params with speaker references
+			chunkParams = make(map[string]interface{})
+			for k, v := range params {
+				chunkParams[k] = v
+			}
+			chunkParams["known_speaker_references"] = splitter.ToSpeakerReferences(speakerSamples)
+			speakerRefsUsed = true
+		}
+
 		// Transcribe this chunk
-		result, err := adapter.Transcribe(ctx, chunkInput, params, procCtx)
+		result, err := adapter.Transcribe(ctx, chunkInput, chunkParams, procCtx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to transcribe chunk %d: %w", i+1, err)
 		}
 
 		results = append(results, result)
+
+		// After first chunk, extract speaker samples for subsequent chunks
+		if i == 0 && useSpeakerRefs {
+			sampleDir := filepath.Join(procCtx.TempDirectory, procCtx.JobID)
+			samples, err := splitter.ExtractSpeakerSamples(ctx, result, chunk.FilePath, sampleDir)
+			if err != nil {
+				logger.Warn("Failed to extract speaker samples, continuing without references",
+					"job_id", procCtx.JobID, "error", err)
+			} else if len(samples) > 0 {
+				speakerSamples = samples
+				logger.Info("Extracted speaker samples for cross-chunk consistency",
+					"job_id", procCtx.JobID,
+					"speakers", len(samples))
+				// Cleanup samples when done
+				defer splitter.CleanupSpeakerSamples(samples)
+			}
+		}
 	}
 
-	// Merge all results
-	merged := splitter.MergeResults(results, splitResult.Chunks)
+	// Merge all results with speaker reference flag
+	merged := splitter.MergeResults(results, splitResult.Chunks, speakerRefsUsed)
 
 	logger.Info("Audio chunks merged successfully",
 		"job_id", procCtx.JobID,
-		"total_segments", len(merged.Segments))
+		"total_segments", len(merged.Segments),
+		"speaker_refs_used", speakerRefsUsed)
 
 	return merged, nil
 }

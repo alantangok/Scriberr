@@ -8,8 +8,10 @@ import (
 	"scriberr/internal/transcription/interfaces"
 )
 
-// MergeResults combines transcript results from multiple chunks
-func MergeResults(results []*interfaces.TranscriptResult, chunks []ChunkInfo) *interfaces.TranscriptResult {
+// MergeResults combines transcript results from multiple chunks.
+// If speakerRefsUsed is true, speaker labels are consistent across chunks (no prefixing).
+// If false, speaker labels are prefixed with chunk index to distinguish cross-chunk speakers.
+func MergeResults(results []*interfaces.TranscriptResult, chunks []ChunkInfo, speakerRefsUsed bool) *interfaces.TranscriptResult {
 	if len(results) == 0 {
 		return nil
 	}
@@ -45,17 +47,8 @@ func MergeResults(results []*interfaces.TranscriptResult, chunks []ChunkInfo) *i
 		}
 
 		// Adjust and append segments
-		// Prefix speaker with chunk index to distinguish cross-chunk speakers
-		// e.g., "Speaker A" in chunk 2 becomes "2-A"
 		for _, seg := range result.Segments {
-			var speaker *string
-			if seg.Speaker != nil && *seg.Speaker != "" && len(results) > 1 {
-				// Extract letter from "Speaker A" -> "A", then prefix with chunk
-				s := fmt.Sprintf("%d-%s", i, strings.TrimPrefix(*seg.Speaker, "Speaker "))
-				speaker = &s
-			} else {
-				speaker = seg.Speaker
-			}
+			speaker := adjustSpeakerLabel(seg.Speaker, i, len(results), speakerRefsUsed)
 			adjustedSeg := interfaces.TranscriptSegment{
 				Start:    seg.Start + timeOffset,
 				End:      seg.End + timeOffset,
@@ -68,13 +61,7 @@ func MergeResults(results []*interfaces.TranscriptResult, chunks []ChunkInfo) *i
 
 		// Adjust and append word segments
 		for _, word := range result.WordSegments {
-			var speaker *string
-			if word.Speaker != nil && *word.Speaker != "" && len(results) > 1 {
-				s := fmt.Sprintf("%d-%s", i, strings.TrimPrefix(*word.Speaker, "Speaker "))
-				speaker = &s
-			} else {
-				speaker = word.Speaker
-			}
+			speaker := adjustSpeakerLabel(word.Speaker, i, len(results), speakerRefsUsed)
 			adjustedWord := interfaces.TranscriptWord{
 				Start:   word.Start + timeOffset,
 				End:     word.End + timeOffset,
@@ -113,6 +100,31 @@ func MergeResults(results []*interfaces.TranscriptResult, chunks []ChunkInfo) *i
 
 	merged.ProcessingTime = totalProcessingTime
 	merged.Metadata["chunks_processed"] = fmt.Sprintf("%d", len(results))
+	if speakerRefsUsed {
+		merged.Metadata["speaker_references_used"] = "true"
+	}
 
 	return merged
+}
+
+// adjustSpeakerLabel applies chunk prefix to speaker label if needed.
+// When speaker references are used, speakers are consistent across chunks (no prefix).
+// Otherwise, prefix with chunk index (e.g., "A" -> "0-A") to distinguish speakers.
+func adjustSpeakerLabel(speaker *string, chunkIndex, totalChunks int, speakerRefsUsed bool) *string {
+	if speaker == nil || *speaker == "" {
+		return speaker
+	}
+
+	// If speaker references were used, speakers are consistent - no prefixing needed
+	if speakerRefsUsed {
+		return speaker
+	}
+
+	// Multiple chunks without speaker references - prefix to distinguish
+	if totalChunks > 1 {
+		s := fmt.Sprintf("%d-%s", chunkIndex, strings.TrimPrefix(*speaker, "Speaker "))
+		return &s
+	}
+
+	return speaker
 }
