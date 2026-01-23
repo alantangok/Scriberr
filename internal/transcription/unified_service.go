@@ -16,6 +16,7 @@ import (
 	"scriberr/internal/sse"
 	"scriberr/internal/transcription/interfaces"
 	"scriberr/internal/transcription/pipeline"
+	"scriberr/internal/transcription/postprocessor"
 	"scriberr/internal/transcription/registry"
 	"scriberr/internal/transcription/splitter"
 	"scriberr/internal/webhook"
@@ -54,6 +55,7 @@ type UnifiedTranscriptionService struct {
 	webhookService        *webhook.Service
 	broadcaster           *sse.Broadcaster
 	audioSplitter         *splitter.AudioSplitter // For splitting large audio files
+	aiPostprocessor       *postprocessor.AITextPostprocessor
 }
 
 // NewUnifiedTranscriptionService creates a new unified transcription service
@@ -78,6 +80,14 @@ func NewUnifiedTranscriptionService(jobRepo repository.JobRepository, tempDir, o
 // SetBroadcaster sets the SSE broadcaster for the service
 func (u *UnifiedTranscriptionService) SetBroadcaster(b *sse.Broadcaster) {
 	u.broadcaster = b
+}
+
+// SetAIPostprocessor configures the AI text postprocessor
+func (u *UnifiedTranscriptionService) SetAIPostprocessor(apiKey, model string, enabled bool) {
+	u.aiPostprocessor = postprocessor.NewAITextPostprocessor(apiKey, model, enabled)
+	if enabled {
+		logger.Info("AI post-processing enabled", "model", model)
+	}
 }
 
 // Initialize prepares all registered models for use
@@ -330,6 +340,16 @@ func (u *UnifiedTranscriptionService) processSingleTrackJob(ctx context.Context,
 			if transcriptResult != nil && diarizationResult != nil {
 				transcriptResult = u.mergeDiarizationWithTranscription(transcriptResult, diarizationResult)
 			}
+		}
+	}
+
+	// Apply AI post-processing if enabled
+	if transcriptResult != nil && u.aiPostprocessor != nil {
+		processedResult, err := u.aiPostprocessor.ProcessTranscript(ctx, transcriptResult, nil)
+		if err != nil {
+			logger.Warn("AI post-processing failed, using original result", "error", err)
+		} else {
+			transcriptResult = processedResult
 		}
 	}
 

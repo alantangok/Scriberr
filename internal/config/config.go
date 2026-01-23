@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"scriberr/pkg/logger"
@@ -41,6 +42,11 @@ type Config struct {
 
 	// Hugging Face configuration
 	HFToken string
+
+	// AI Post-processing configuration
+	EnableAIPostProcessing   bool
+	PostProcessingModel      string
+	PostProcessingBatchSize  int
 }
 
 // Load loads configuration from environment variables and .env file
@@ -68,8 +74,11 @@ func Load() *Config {
 		TempDir:        getEnv("TEMP_DIR", "data/temp"),
 		WhisperXEnv:    getEnv("WHISPERX_ENV", "data/whisperx-env"),
 		SecureCookies:  getEnv("SECURE_COOKIES", defaultSecure) == "true",
-		OpenAIAPIKey:   getEnv("OPENAI_API_KEY", ""),
-		HFToken:        getEnv("HF_TOKEN", ""),
+		OpenAIAPIKey:              getEnv("OPENAI_API_KEY", ""),
+		HFToken:                   getEnv("HF_TOKEN", ""),
+		EnableAIPostProcessing:   getEnv("ENABLE_AI_POST_PROCESSING", "false") == "true",
+		PostProcessingModel:      getEnv("POST_PROCESSING_MODEL", "gpt-4o"),
+		PostProcessingBatchSize:  getEnvInt("POST_PROCESSING_BATCH_SIZE", 50),
 	}
 }
 
@@ -82,6 +91,16 @@ func (c *Config) IsProduction() bool {
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
+	}
+	return defaultValue
+}
+
+// getEnvInt gets an integer environment variable with a default value
+func getEnvInt(key string, defaultValue int) int {
+	if value := os.Getenv(key); value != "" {
+		if intVal, err := strconv.Atoi(value); err == nil {
+			return intVal
+		}
 	}
 	return defaultValue
 }

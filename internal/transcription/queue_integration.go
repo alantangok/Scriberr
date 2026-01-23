@@ -50,6 +50,11 @@ func (u *UnifiedJobProcessor) GetUnifiedService() *UnifiedTranscriptionService {
 	return u.unifiedService
 }
 
+// SetAIPostprocessor configures the AI text postprocessor
+func (u *UnifiedJobProcessor) SetAIPostprocessor(apiKey, model string, enabled bool) {
+	u.unifiedService.SetAIPostprocessor(apiKey, model, enabled)
+}
+
 // GetSupportedModels returns all supported models through the new architecture
 func (u *UnifiedJobProcessor) GetSupportedModels() map[string]interface{} {
 	capabilities := u.unifiedService.GetSupportedModels()
