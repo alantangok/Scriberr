@@ -23,6 +23,9 @@ const (
 	MaxDurationMinutes = 5
 	// ChunkDurationMinutes is the target chunk duration (5 minutes)
 	ChunkDurationMinutes = 5
+	// MinChunkDurationSeconds is the minimum duration for a valid chunk (1 second)
+	// Chunks shorter than this are discarded to avoid OpenAI API errors
+	MinChunkDurationSeconds = 1.0
 )
 
 // AudioSplitter handles splitting large audio files into chunks
@@ -147,12 +150,35 @@ func (s *AudioSplitter) Split(ctx context.Context, input interfaces.AudioInput, 
 		s.estimateChunkDurations(chunks, input.Duration.Seconds(), chunkDurationSec)
 	}
 
+	// Filter out chunks that are too short (caused by audio duration slightly exceeding threshold)
+	validChunks := make([]ChunkInfo, 0, len(chunks))
+	for _, chunk := range chunks {
+		if chunk.Duration >= MinChunkDurationSeconds {
+			validChunks = append(validChunks, chunk)
+		} else {
+			logger.Warn("Skipping chunk that is too short",
+				"chunk", chunk.FilePath,
+				"duration_sec", chunk.Duration,
+				"min_duration_sec", MinChunkDurationSeconds)
+			// Clean up the invalid chunk file
+			if err := os.Remove(chunk.FilePath); err != nil {
+				logger.Warn("Failed to remove invalid chunk", "file", chunk.FilePath, "error", err)
+			}
+		}
+	}
+
+	// If all chunks were filtered out, return error
+	if len(validChunks) == 0 {
+		return nil, fmt.Errorf("no valid chunks after filtering (all chunks too short)")
+	}
+
 	logger.Info("Audio split complete",
-		"chunks", len(chunks),
+		"total_chunks", len(chunks),
+		"valid_chunks", len(validChunks),
 		"chunk_duration_sec", chunkDurationSec)
 
 	return &SplitResult{
-		Chunks:       chunks,
+		Chunks:       validChunks,
 		OriginalPath: input.FilePath,
 		NeedsSplit:   true,
 	}, nil
