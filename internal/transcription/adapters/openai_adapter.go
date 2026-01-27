@@ -223,11 +223,25 @@ func (a *OpenAIAdapter) Transcribe(ctx context.Context, input interfaces.AudioIn
 	_ = writer.WriteField("temperature", fmt.Sprintf("%.2f", temp))
 
 	// Add known_speaker_references for cross-chunk speaker consistency
-	// Format: known_speaker_names[] = ["A", "B"] and known_speaker_references[] = ["data:audio/mp3;base64,..."]
+	// OpenAI expects either:
+	// 1. File uploads via CreateFormFile (multipart file fields)
+	// 2. Data URLs as string fields (data:audio/mp3;base64,...)
+	// We use approach #2 as it's simpler and matches OpenAI's documentation
 	if refs, ok := params["known_speaker_references"]; ok {
 		if speakerRefs, ok := refs.([]splitter.SpeakerReference); ok && len(speakerRefs) > 0 {
 			writeLog("Adding %d speaker references for cross-chunk consistency", len(speakerRefs))
 			for _, ref := range speakerRefs {
+				dataURLLen := len(ref.ReferenceAudio)
+				writeLog("Speaker reference: speaker=%s, data_url_length=%d bytes", ref.Speaker, dataURLLen)
+
+				// Validate data URL format and size
+				if dataURLLen > 1000000 { // 1MB limit for safety
+					writeLog("Warning: Speaker reference data URL is very large (%d bytes), may cause API rejection", dataURLLen)
+				}
+				if !strings.HasPrefix(ref.ReferenceAudio, "data:audio/") {
+					writeLog("Warning: Speaker reference does not start with 'data:audio/', format may be incorrect")
+				}
+
 				_ = writer.WriteField("known_speaker_names[]", ref.Speaker)
 				_ = writer.WriteField("known_speaker_references[]", ref.ReferenceAudio)
 			}
@@ -339,7 +353,18 @@ func (a *OpenAIAdapter) Transcribe(ctx context.Context, input interfaces.AudioIn
 		// Re-add speaker references on retry
 		if refs, ok := params["known_speaker_references"]; ok {
 			if speakerRefs, ok := refs.([]splitter.SpeakerReference); ok && len(speakerRefs) > 0 {
+				writeLog("Re-adding %d speaker references on retry", len(speakerRefs))
 				for _, ref := range speakerRefs {
+					dataURLLen := len(ref.ReferenceAudio)
+					writeLog("Speaker reference: speaker=%s, data_url_length=%d bytes", ref.Speaker, dataURLLen)
+
+					if dataURLLen > 1000000 {
+						writeLog("Warning: Speaker reference data URL is very large (%d bytes), may cause API rejection", dataURLLen)
+					}
+					if !strings.HasPrefix(ref.ReferenceAudio, "data:audio/") {
+						writeLog("Warning: Speaker reference does not start with 'data:audio/', format may be incorrect")
+					}
+
 					_ = writer.WriteField("known_speaker_names[]", ref.Speaker)
 					_ = writer.WriteField("known_speaker_references[]", ref.ReferenceAudio)
 				}
