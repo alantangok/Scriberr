@@ -140,6 +140,86 @@
 
 Always check both locations when troubleshooting.
 
+### Issue: Transcription Fails with "Audio file might be corrupted or unsupported"
+
+**Symptoms:**
+- Job status: `failed`
+- Error message: `OpenAI API error (status 400): Audio file might be corrupted or unsupported`
+- Logs show: "failed to transcribe chunk X"
+- Chunk has very short duration (< 1 second)
+
+**Root Cause:**
+Audio files with duration slightly exceeding threshold (e.g., 300.024s > 300s) trigger splitting, and FFmpeg creates tiny remainder chunks at the end:
+- Audio: 5 minutes 0.024 seconds (300.024s)
+- Chunk splitting: 5-minute chunks
+- Result:
+  - chunk_000.mp3: 300 seconds ✅
+  - chunk_001.mp3: 0.024 seconds ❌ (too short for OpenAI)
+
+OpenAI API rejects audio chunks shorter than ~1 second.
+
+**Solution:**
+
+**Already Fixed in Code** (commit `eb763c3`):
+- Added `MinChunkDurationSeconds = 1.0` filter
+- Chunks < 1 second automatically filtered and removed
+- No manual intervention needed for new transcriptions
+
+**For Old Failed Jobs:**
+
+1. Check job error details:
+   ```bash
+   ssh likshing "sqlite3 /opt/scriberr/data/scriberr.db \
+     \"SELECT id, status, error_message FROM transcription_jobs WHERE status='failed' LIMIT 5;\""
+   ```
+
+2. Identify chunk-related failures:
+   ```bash
+   # Look for "failed to transcribe chunk" errors
+   ssh likshing "journalctl -u scriberr --since '24 hours ago' | grep 'failed to transcribe chunk'"
+   ```
+
+3. Retry failed job:
+   ```bash
+   # Reset job to pending status
+   ssh likshing "sqlite3 /opt/scriberr/data/scriberr.db \
+     \"UPDATE transcription_jobs SET status='pending', error_message=NULL WHERE id='JOB_ID';\""
+   
+   # Restart service to pick up pending job
+   ssh likshing "sudo systemctl restart scriberr"
+   ```
+
+4. Monitor transcription progress:
+   ```bash
+   # Watch logs
+   ssh likshing "journalctl -u scriberr -f | grep -E 'chunk|completed|failed'"
+   
+   # Check job status
+   ssh likshing "sqlite3 /opt/scriberr/data/scriberr.db \
+     \"SELECT id, status, length(transcript) FROM transcription_jobs WHERE id='JOB_ID';\""
+   ```
+
+**Verification:**
+- Logs should show: "Skipping chunk that is too short"
+- Valid chunks processed successfully
+- Job status changes to: `processing` → `completed`
+- Transcript appears in UI
+
+**Example Log Output (Fixed):**
+```
+time=17:32:17 level="WARN " msg="Skipping chunk that is too short" 
+  chunk=data/temp/.../chunk_001.mp3 duration_sec=0.072 min_duration_sec=1
+time=17:32:17 level="INFO " msg="Audio split complete" 
+  total_chunks=2 valid_chunks=1 chunk_duration_sec=300
+time=17:34:13 level="INFO " msg="Model processing completed" 
+  model_id=openai_whisper processing_time=1m55.798602134s
+```
+
+**Prevention:**
+- Fix is already in production code
+- Automatically handles edge cases near duration thresholds
+- No configuration changes needed
+
 ## Testing Checklist After Deployment
 
 1. **Service Status**: `ssh likshing "systemctl status scriberr"`
