@@ -309,7 +309,19 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
                         )}
                     >
                         {/* Timestamp & Speaker */}
-                        <div className="flex-shrink-0 w-24 sm:w-28 flex flex-col items-start sm:items-end gap-1 text-xs text-carbon-500 dark:text-carbon-400 select-none mt-1">
+                        <div
+                            className="flex-shrink-0 w-24 sm:w-28 flex flex-col items-start sm:items-end gap-1 text-xs text-carbon-500 dark:text-carbon-400 select-none mt-1 cursor-pointer hover:text-carbon-700 dark:hover:text-carbon-200 transition-colors"
+                            onClick={() => onSeek(segment.start)}
+                            role="button"
+                            tabIndex={0}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                    e.preventDefault();
+                                    onSeek(segment.start);
+                                }
+                            }}
+                            title="Click to seek to this segment"
+                        >
                             <span className="font-mono bg-carbon-100 dark:bg-carbon-800/80 px-1.5 py-0.5 rounded text-[10px] sm:text-xs">
                                 {new Date(segment.start * 1000).toISOString().substr(11, 8)}
                             </span>
