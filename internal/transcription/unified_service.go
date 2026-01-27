@@ -517,8 +517,10 @@ func (u *UnifiedTranscriptionService) transcribeWithSplitting(
 		}
 
 		// For chunks after the first, add speaker references if available
+		// Can be disabled via DISABLE_SPEAKER_REFS=true for debugging
 		chunkParams := params
-		if i > 0 && len(speakerSamples) > 0 {
+		disableSpeakerRefs := os.Getenv("DISABLE_SPEAKER_REFS") == "true"
+		if i > 0 && len(speakerSamples) > 0 && !disableSpeakerRefs {
 			// Create copy of params with speaker references
 			chunkParams = make(map[string]interface{})
 			for k, v := range params {
@@ -526,6 +528,9 @@ func (u *UnifiedTranscriptionService) transcribeWithSplitting(
 			}
 			chunkParams["known_speaker_references"] = splitter.ToSpeakerReferences(speakerSamples)
 			speakerRefsUsed = true
+			logger.Debug("Using speaker references for chunk consistency", "chunk", i+1, "speakers", len(speakerSamples))
+		} else if i > 0 && disableSpeakerRefs {
+			logger.Info("Speaker references disabled via DISABLE_SPEAKER_REFS env var", "chunk", i+1)
 		}
 
 		// Transcribe this chunk
