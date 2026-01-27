@@ -1,7 +1,6 @@
-import { forwardRef, useRef, useState, useCallback, useEffect, useMemo } from 'react';
+import { forwardRef, useRef, useCallback, useEffect, useMemo } from 'react';
 import { useKaraokeHighlight, computeWordOffsets, findActiveWordIndex } from '@/features/transcription/hooks/useKaraokeHighlight';
 import { cn } from '@/lib/utils';
-import { useIsDesktop } from '@/hooks/useIsDesktop';
 import type { Note } from '@/types/note';
 
 // Helper for cross-browser caret position
@@ -71,8 +70,6 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
     };
 
     const containerRef = useRef<HTMLDivElement>(null);
-    const [isModifierPressed, setIsModifierPressed] = useState(false);
-    const isDesktop = useIsDesktop();
 
     // Use CSS Highlight API for Compact Mode
     // Note: We only use this hook when in compact mode to save resources
@@ -98,12 +95,6 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
             e.preventDefault();
         }
     }, [offsets, onSeek]);
-
-    // Remove modifier key listener - not needed for direct click
-    // Direct click is always enabled, so we set isModifierPressed to true
-    useEffect(() => {
-        setIsModifierPressed(true);
-    }, []);
 
     // Expanded View Logic
     const segmentRefs = useRef<(HTMLDivElement | null)[]>([]);
