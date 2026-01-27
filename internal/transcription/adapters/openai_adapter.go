@@ -223,12 +223,13 @@ func (a *OpenAIAdapter) Transcribe(ctx context.Context, input interfaces.AudioIn
 	_ = writer.WriteField("temperature", fmt.Sprintf("%.2f", temp))
 
 	// Add known_speaker_references for cross-chunk speaker consistency
+	// Format: known_speaker_names[] = ["A", "B"] and known_speaker_references[] = ["data:audio/mp3;base64,..."]
 	if refs, ok := params["known_speaker_references"]; ok {
 		if speakerRefs, ok := refs.([]splitter.SpeakerReference); ok && len(speakerRefs) > 0 {
 			writeLog("Adding %d speaker references for cross-chunk consistency", len(speakerRefs))
-			for i, ref := range speakerRefs {
-				_ = writer.WriteField(fmt.Sprintf("known_speaker_references[%d][speaker]", i), ref.Speaker)
-				_ = writer.WriteField(fmt.Sprintf("known_speaker_references[%d][reference_audio]", i), ref.ReferenceAudio)
+			for _, ref := range speakerRefs {
+				_ = writer.WriteField("known_speaker_names[]", ref.Speaker)
+				_ = writer.WriteField("known_speaker_references[]", ref.ReferenceAudio)
 			}
 		}
 	}
