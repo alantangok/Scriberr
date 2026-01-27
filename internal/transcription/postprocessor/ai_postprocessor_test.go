@@ -181,3 +181,66 @@ func TestAppliesTo_Disabled(t *testing.T) {
 	p := &AITextPostprocessor{enabled: false}
 	assert.False(t, p.AppliesTo(interfaces.ModelCapabilities{}, nil))
 }
+
+func TestParseCleanupResponse_PreserveRepeatedStructures(t *testing.T) {
+	// Test case: "我想飲牛奶我想飲雞尾酒" should NOT become "我想飲牛奶雞尾酒"
+	// The LLM should preserve the repeated "我想" structure
+	response := `[
+		{"text": "我哋今日去咗邊度，去咗飲酒，但係想飲嗰杯雞尾酒又想飲牛奶。", "speaker": "A", "start": 0.0, "end": 5.0}
+	]`
+
+	original := []CleanedSegment{
+		{Text: "我哋今日去咗邊度", Speaker: "A", Start: 0.0, End: 1.0},
+		{Text: "去咗飲酒", Speaker: "A", Start: 1.0, End: 2.0},
+		{Text: "但係想飲嗰杯雞尾酒", Speaker: "A", Start: 2.0, End: 3.5},
+		{Text: "又想飲牛奶", Speaker: "A", Start: 3.5, End: 5.0},
+	}
+
+	segments, err := parseCleanupResponse(response, original)
+	assert.NoError(t, err)
+	assert.Len(t, segments, 1)
+	// Verify the repeated structure is maintained (想飲...又想飲...)
+	assert.Contains(t, segments[0].Text, "想飲")
+	// Should contain both "雞尾酒" and "牛奶"
+	assert.Contains(t, segments[0].Text, "雞尾酒")
+	assert.Contains(t, segments[0].Text, "牛奶")
+}
+
+func TestParseCleanupResponse_RemoveExcessiveRepetition(t *testing.T) {
+	// Test case: "是是是" (3+ times) should be reduced to "是是"
+	// But "是是" (2 times) should be kept
+	response := `[
+		{"text": "是是，我明白。", "speaker": "A", "start": 0.0, "end": 2.0}
+	]`
+
+	original := []CleanedSegment{
+		{Text: "是是是", Speaker: "A", Start: 0.0, End: 1.0},
+		{Text: "我明白", Speaker: "A", Start: 1.0, End: 2.0},
+	}
+
+	segments, err := parseCleanupResponse(response, original)
+	assert.NoError(t, err)
+	assert.Len(t, segments, 1)
+	// Should have reduced "是是是" to "是是" (only 2 times)
+	assert.Contains(t, segments[0].Text, "是是")
+	assert.Contains(t, segments[0].Text, "明白")
+}
+
+func TestParseCleanupResponse_KeepNaturalAcknowledgments(t *testing.T) {
+	// Test case: Single acknowledgments like "嗯", "是", "明白" should be kept
+	response := `[
+		{"text": "嗯，我明白了。", "speaker": "A", "start": 0.0, "end": 2.0}
+	]`
+
+	original := []CleanedSegment{
+		{Text: "嗯", Speaker: "A", Start: 0.0, End: 0.5},
+		{Text: "我明白了", Speaker: "A", Start: 0.5, End: 2.0},
+	}
+
+	segments, err := parseCleanupResponse(response, original)
+	assert.NoError(t, err)
+	assert.Len(t, segments, 1)
+	// Should preserve the "嗯" acknowledgment
+	assert.Contains(t, segments[0].Text, "嗯")
+	assert.Contains(t, segments[0].Text, "明白")
+}

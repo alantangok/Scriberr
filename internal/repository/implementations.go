@@ -56,6 +56,7 @@ type JobRepository interface {
 	ListWithParams(ctx context.Context, offset, limit int, sortBy, sortOrder, searchQuery string, updatedAfter *time.Time) ([]models.TranscriptionJob, int64, error)
 	ListByUser(ctx context.Context, userID uint, offset, limit int) ([]models.TranscriptionJob, int64, error)
 	UpdateTranscript(ctx context.Context, jobID string, transcript string) error
+	UpdateOriginalTranscript(ctx context.Context, jobID string, transcript string) error
 	CreateExecution(ctx context.Context, execution *models.TranscriptionJobExecution) error
 	UpdateExecution(ctx context.Context, execution *models.TranscriptionJobExecution) error
 	DeleteExecutionsByJobID(ctx context.Context, jobID string) error
@@ -144,6 +145,12 @@ func (r *jobRepository) UpdateTranscript(ctx context.Context, jobID string, tran
 	return r.db.WithContext(ctx).Model(&models.TranscriptionJob{}).
 		Where("id = ?", jobID).
 		Update("transcript", transcript).Error
+}
+
+func (r *jobRepository) UpdateOriginalTranscript(ctx context.Context, jobID string, transcript string) error {
+	return r.db.WithContext(ctx).Model(&models.TranscriptionJob{}).
+		Where("id = ?", jobID).
+		Update("original_transcript", transcript).Error
 }
 
 func (r *jobRepository) CreateExecution(ctx context.Context, execution *models.TranscriptionJobExecution) error {

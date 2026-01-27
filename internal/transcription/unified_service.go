@@ -345,6 +345,11 @@ func (u *UnifiedTranscriptionService) processSingleTrackJob(ctx context.Context,
 
 	// Apply AI post-processing if enabled
 	if transcriptResult != nil && u.aiPostprocessor != nil {
+		// Save original STT output before AI post-processing (for potential reprocessing)
+		if err := u.saveOriginalTranscript(job.ID, transcriptResult); err != nil {
+			logger.Warn("Failed to save original transcript backup", "error", err)
+		}
+
 		processedResult, err := u.aiPostprocessor.ProcessTranscript(ctx, transcriptResult, nil)
 		if err != nil {
 			logger.Warn("AI post-processing failed, using original result", "error", err)
@@ -1027,6 +1032,22 @@ func (u *UnifiedTranscriptionService) saveTranscriptionResults(jobID string, res
 	return nil
 }
 
+// saveOriginalTranscript saves the raw STT output before AI post-processing
+// This allows reprocessing without compounding losses from multiple runs
+func (u *UnifiedTranscriptionService) saveOriginalTranscript(jobID string, result *interfaces.TranscriptResult) error {
+	resultJSON, err := u.convertTranscriptResultToJSON(result)
+	if err != nil {
+		return fmt.Errorf("failed to convert result to JSON: %w", err)
+	}
+
+	if err := u.jobRepo.UpdateOriginalTranscript(context.Background(), jobID, resultJSON); err != nil {
+		return fmt.Errorf("failed to save original transcript: %w", err)
+	}
+
+	logger.Info("Saved original transcript backup", "job_id", jobID, "segments", len(result.Segments))
+	return nil
+}
+
 // convertTranscriptResultToJSON converts the interface result to JSON format
 func (u *UnifiedTranscriptionService) convertTranscriptResultToJSON(result *interfaces.TranscriptResult) (string, error) {
 	// Now that the struct fields match the JSON field names, we can directly marshal
@@ -1080,18 +1101,28 @@ func (u *UnifiedTranscriptionService) ReprocessTranscript(ctx context.Context, j
 		return fmt.Errorf("failed to get job: %w", err)
 	}
 
-	if job.Transcript == nil || *job.Transcript == "" {
+	// Prefer original_transcript if available (raw STT output)
+	// This prevents compounding losses from multiple reprocess runs
+	transcriptJSON := job.Transcript
+	isUsingOriginal := false
+	if job.OriginalTranscript != nil && *job.OriginalTranscript != "" {
+		transcriptJSON = job.OriginalTranscript
+		isUsingOriginal = true
+		logger.Info("Using original transcript for reprocessing (avoiding compounded losses)")
+	}
+
+	if transcriptJSON == nil || *transcriptJSON == "" {
 		return fmt.Errorf("no transcript found for job %s", jobID)
 	}
 
-	// Parse existing transcript
+	// Parse the transcript
 	var result interfaces.TranscriptResult
-	if err := json.Unmarshal([]byte(*job.Transcript), &result); err != nil {
+	if err := json.Unmarshal([]byte(*transcriptJSON), &result); err != nil {
 		return fmt.Errorf("failed to parse existing transcript: %w", err)
 	}
 
 	logger.Info("Reprocessing transcript with AI post-processor",
-		"job_id", jobID, "segments", len(result.Segments))
+		"job_id", jobID, "segments", len(result.Segments), "using_original", isUsingOriginal)
 
 	// Run AI post-processing
 	processedResult, err := u.aiPostprocessor.ProcessTranscript(ctx, &result, nil)

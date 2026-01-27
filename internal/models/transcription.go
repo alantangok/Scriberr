@@ -14,6 +14,7 @@ type TranscriptionJob struct {
 	Status                JobStatus      `json:"status" gorm:"type:varchar(20);not null;default:'pending'"`
 	AudioPath             string         `json:"audio_path" gorm:"type:text;not null"`
 	Transcript            *string        `json:"transcript,omitempty" gorm:"type:text"`
+	OriginalTranscript    *string        `json:"original_transcript,omitempty" gorm:"type:text"` // Raw STT output before AI post-processing
 	Diarization           bool           `json:"diarization" gorm:"type:boolean;default:false"`
 	Summary               *string        `json:"summary,omitempty" gorm:"type:text"`
 	ErrorMessage          *string        `json:"error_message,omitempty" gorm:"type:text"`
