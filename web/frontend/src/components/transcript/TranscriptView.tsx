@@ -84,11 +84,8 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
         isPlaying
     );
 
-    // Click-to-Seek Handler
+    // Click-to-Seek Handler - Direct click without modifier keys
     const handleWordClick = useCallback((e: React.MouseEvent) => {
-        // Only trigger if Cmd (Mac) or Ctrl (Windows) is held
-        if (!e.metaKey && !e.ctrlKey) return;
-
         const clickOffset = getCaretOffsetFromPoint(e.clientX, e.clientY);
         if (clickOffset === null) return;
 
@@ -102,21 +99,10 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
         }
     }, [offsets, onSeek]);
 
-    // Keyboard listener for modifier key visual cue
+    // Remove modifier key listener - not needed for direct click
+    // Direct click is always enabled, so we set isModifierPressed to true
     useEffect(() => {
-        const handleKeyDown = (e: KeyboardEvent) => {
-            if (e.key === 'Meta' || e.key === 'Control') setIsModifierPressed(true);
-        };
-        const handleKeyUp = (e: KeyboardEvent) => {
-            if (e.key === 'Meta' || e.key === 'Control') setIsModifierPressed(false);
-        };
-
-        window.addEventListener('keydown', handleKeyDown);
-        window.addEventListener('keyup', handleKeyUp);
-        return () => {
-            window.removeEventListener('keydown', handleKeyDown);
-            window.removeEventListener('keyup', handleKeyUp);
-        };
+        setIsModifierPressed(true);
     }, []);
 
     // Expanded View Logic
@@ -228,10 +214,8 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
 
     }, [currentTime, isPlaying, mode, expandedData]);
 
-    // 3. Click Handler for Expanded View
+    // 3. Click Handler for Expanded View - Direct click without modifier keys
     const handleExpandedClick = useCallback((e: React.MouseEvent, segmentIndex: number) => {
-        if (!e.metaKey && !e.ctrlKey) return;
-
         const clickOffset = getCaretOffsetFromPoint(e.clientX, e.clientY);
         if (clickOffset === null) return;
 
@@ -265,22 +249,18 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
         return (
             <div
                 ref={containerRef}
-                onClick={isDesktop ? handleWordClick : undefined}
+                onClick={handleWordClick}
                 className={cn(
-                    "text-lg leading-relaxed text-carbon-700 dark:text-carbon-300 whitespace-pre-wrap font-reading selection:bg-orange-500/30 transition-colors duration-200 select-text",
-                    isDesktop && isModifierPressed ? 'cursor-pointer hover:text-carbon-900 dark:hover:text-carbon-100' : 'cursor-text'
+                    "text-lg leading-relaxed text-carbon-700 dark:text-carbon-300 whitespace-pre-wrap font-reading transition-colors duration-200 cursor-pointer hover:text-carbon-900 dark:hover:text-carbon-100"
                 )}
                 style={{
-                    // CRITICAL: Enable native text selection on iOS/Android
-                    WebkitUserSelect: 'text',
-                    userSelect: 'text',
-                    // CRITICAL: Remove grey tap highlight on iOS
+                    // Disable text selection for click-to-seek
+                    WebkitUserSelect: 'none',
+                    userSelect: 'none',
+                    // Remove grey tap highlight on iOS
                     WebkitTapHighlightColor: 'transparent',
-                    // CRITICAL: Allow text selection gestures while supporting scroll
-                    // 'manipulation' allows pan and pinch-zoom but not double-tap zoom
+                    // Allow click gestures while supporting scroll
                     touchAction: 'pan-y pinch-zoom',
-                    // Ensure text is the selection target, not the container
-                    WebkitTouchCallout: 'default'
                 }}
                 data-transcript-text
             >
@@ -338,20 +318,18 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
                         {/* Text */}
                         <div
                             ref={(el) => { segmentRefs.current[i] = el; }}
-                            onClick={isDesktop ? (e) => handleExpandedClick(e, i) : undefined}
+                            onClick={(e) => handleExpandedClick(e, i)}
                             className={cn(
-                                "flex-grow text-base text-primary leading-relaxed whitespace-pre-wrap font-reading transition-colors duration-200 select-text",
-                                isDesktop && isModifierPressed ? 'cursor-pointer hover:text-carbon-900 dark:hover:text-carbon-100' : 'cursor-text'
+                                "flex-grow text-base text-primary leading-relaxed whitespace-pre-wrap font-reading transition-colors duration-200 cursor-pointer hover:text-carbon-900 dark:hover:text-carbon-100"
                             )}
                             style={{
-                                // CRITICAL: Enable native text selection on iOS/Android
-                                WebkitUserSelect: 'text',
-                                userSelect: 'text',
-                                // CRITICAL: Remove grey tap highlight on iOS
+                                // Disable text selection for click-to-seek
+                                WebkitUserSelect: 'none',
+                                userSelect: 'none',
+                                // Remove grey tap highlight on iOS
                                 WebkitTapHighlightColor: 'transparent',
-                                // CRITICAL: Allow text selection gestures while supporting scroll
+                                // Allow click gestures while supporting scroll
                                 touchAction: 'pan-y pinch-zoom',
-                                WebkitTouchCallout: 'default'
                             }}
                             data-transcript-text
                         >
