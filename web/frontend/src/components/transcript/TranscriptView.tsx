@@ -1,5 +1,5 @@
 import { forwardRef, useRef, useCallback, useEffect, useMemo } from 'react';
-import { useKaraokeHighlight, computeWordOffsets, findActiveWordIndex } from '@/features/transcription/hooks/useKaraokeHighlight';
+import { useKaraokeHighlight, computeWordOffsets, findActiveWordIndex, simulateWordTimestamps } from '@/features/transcription/hooks/useKaraokeHighlight';
 import { cn } from '@/lib/utils';
 import type { Note } from '@/types/note';
 
@@ -73,7 +73,25 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
 
     // Use CSS Highlight API for Compact Mode
     // Note: We only use this hook when in compact mode to save resources
-    const words = transcript?.word_segments || [];
+    // If word_segments don't exist, simulate them from segments data
+    const words = useMemo(() => {
+        if (transcript?.word_segments && transcript.word_segments.length > 0) {
+            return transcript.word_segments;
+        }
+
+        // Simulate word-level timestamps from segments
+        if (transcript?.segments && transcript.segments.length > 0) {
+            const simulatedWords: { word: string; start: number; end: number }[] = [];
+            transcript.segments.forEach(segment => {
+                const segmentWords = simulateWordTimestamps(segment.text, segment.start, segment.end);
+                simulatedWords.push(...segmentWords);
+            });
+            return simulatedWords;
+        }
+
+        return [];
+    }, [transcript]);
+
     const { fullText, offsets } = useKaraokeHighlight(
         containerRef,
         words,
@@ -120,11 +138,15 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
                 };
             }
 
-            // No word_segments - use segment text directly (e.g., OpenAI diarize)
+            // No word_segments - simulate word-level timestamps from segment data
+            // This is useful for models like GPT-4o that don't provide word-level timestamps
+            const simulatedWords = simulateWordTimestamps(segment.text, segment.start, segment.end);
+            const { fullText, offsets } = computeWordOffsets(simulatedWords);
+
             return {
                 ...segment,
-                fullText: segment.text,
-                offsets: [] // No word-level offsets available
+                fullText,
+                offsets
             };
         });
     }, [transcript]);

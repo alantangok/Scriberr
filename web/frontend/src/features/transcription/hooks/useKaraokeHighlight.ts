@@ -15,6 +15,32 @@ declare global {
     }
 }
 
+// Simulate word-level timestamps from segment-level data
+// Distributes segment time proportionally based on character count of each word
+export function simulateWordTimestamps(segmentText: string, segmentStart: number, segmentEnd: number) {
+    const words = segmentText.trim().split(/\s+/);
+    const totalChars = segmentText.replace(/\s+/g, '').length; // Total non-space characters
+    const segmentDuration = segmentEnd - segmentStart;
+
+    let currentTime = segmentStart;
+    const simulatedWords: { word: string; start: number; end: number }[] = [];
+
+    words.forEach(word => {
+        const wordCharCount = word.length;
+        const wordDuration = (wordCharCount / totalChars) * segmentDuration;
+
+        simulatedWords.push({
+            word: word,
+            start: currentTime,
+            end: currentTime + wordDuration
+        });
+
+        currentTime += wordDuration;
+    });
+
+    return simulatedWords;
+}
+
 // Helper to calculate offsets (exported for external use)
 export function computeWordOffsets(words: { word: string; start: number; end: number }[]) {
     let textBuilder = '';
